@@ -1,7 +1,26 @@
 "use client"; 
 
 import { useState, useEffect, useRef } from 'react';
-import NoteCard, { Note, ListItem } from '../components/NoteCard';
+import { Note, ListItem } from '../components/NoteCard';
+// ★追加: 並べ替えに必要なライブラリ
+import { SortableNoteCard } from '../components/SortableNoteCard';
+import { SortableItem } from '../components/SortableItem';
+import {
+  DndContext, 
+  closestCenter, 
+  KeyboardSensor, 
+  PointerSensor, 
+  useSensor, 
+  useSensors,
+  DragEndEvent
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  rectSortingStrategy,
+  verticalListSortingStrategy
+} from '@dnd-kit/sortable';
 
 export default function Home() {
   const [notes, setNotes] = useState<Note[]>([]);
@@ -20,9 +39,13 @@ export default function Home() {
 
   const [notificationPermission, setNotificationPermission] = useState("default");
   const lastCheckedMinute = useRef("");
-  
-  // ★追加: メモ欄の高さを調整するための参照
   const memoTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // ★追加: ドラッグ操作のセンサー設定（少し動かさないとドラッグ開始しないようにして、クリックと区別する）
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
 
   useEffect(() => {
     const savedNotes = localStorage.getItem("my-reminders");
@@ -48,7 +71,6 @@ export default function Home() {
     const savedMemo = localStorage.getItem("simple-memo");
     if (savedMemo) {
       setSimpleMemo(savedMemo);
-      // 読み込み直後に高さを調整
       setTimeout(() => adjustTextareaHeight(memoTextareaRef.current), 100);
     }
 
@@ -63,15 +85,14 @@ export default function Home() {
     if (!isLoaded) return;
     localStorage.setItem("my-reminders", JSON.stringify(notes));
 
-    const timerId = setInterval(checkReminders, 10000); // 10秒ごとにチェック
+    const timerId = setInterval(checkReminders, 10000);
     return () => clearInterval(timerId);
   }, [notes, isLoaded]);
 
-  // ★変更: メモ欄の自動リサイズ機能
   const adjustTextareaHeight = (element: HTMLTextAreaElement | null) => {
     if (!element) return;
-    element.style.height = "auto"; // 一旦リセット
-    element.style.height = `${element.scrollHeight}px`; // 内容に合わせて高さを設定
+    element.style.height = "auto";
+    element.style.height = `${element.scrollHeight}px`;
   };
 
   const handleMemoChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -87,18 +108,15 @@ export default function Home() {
     }
     Notification.requestPermission().then((permission) => {
       setNotificationPermission(permission);
-      if (permission === "granted") {
-        sendTestNotification();
-      }
+      if (permission === "granted") sendTestNotification();
     });
   };
 
-  // ★追加: テスト通知を送る関数
   const sendTestNotification = () => {
     if (Notification.permission === "granted") {
       new Notification("🔔 テスト成功！", { 
         body: "この表示が出れば、リマインダー通知も届きます。",
-        requireInteraction: false // スマホなどですぐ消えないようにする設定（環境による）
+        requireInteraction: false 
       });
     } else {
       alert("通知が許可されていません。ブラウザの設定を確認してください。");
@@ -107,29 +125,49 @@ export default function Home() {
 
   const checkReminders = () => {
     if (Notification.permission !== "granted") return;
-
     const now = new Date();
-    // 比較用: M/D H:mm (例: 2/9 18:00)
-    // 分単位まで一致するかチェック
     const currentString = `${now.getMonth() + 1}/${now.getDate()} ${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}`;
-
-    // デバッグ用: F12のコンソールで確認できます
-    console.log(`現在時刻: ${currentString}, チェック中...`);
-
+    
     if (lastCheckedMinute.current === currentString) return;
     lastCheckedMinute.current = currentString;
 
     notes.forEach(note => {
-      // 時間が一致 かつ 未完了
       if (!note.isCompleted && note.reminder === currentString) {
-        console.log(`🔔 通知発火: ${note.title}`);
         new Notification(`🔔 時間です: ${note.title}`, {
           body: "設定した時刻になりました。",
-          tag: note.id.toString(), // 重複通知防止用タグ
+          tag: note.id.toString(),
         });
       }
     });
   };
+
+  // --- ドラッグ＆ドロップ処理 ---
+
+  // ★ メモ（カード）の並べ替え終了時
+  const handleDragEndNotes = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      setNotes((items) => {
+        const oldIndex = items.findIndex((item) => item.id === active.id);
+        const newIndex = items.findIndex((item) => item.id === over.id);
+        return arrayMove(items, oldIndex, newIndex);
+      });
+    }
+  };
+
+  // ★ モーダル内のタスク並べ替え終了時
+  const handleDragEndItems = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      setInputItems((items) => {
+        const oldIndex = items.findIndex((item) => item.id === active.id);
+        const newIndex = items.findIndex((item) => item.id === over.id);
+        return arrayMove(items, oldIndex, newIndex);
+      });
+    }
+  };
+
+  // ---
 
   const handleAddItem = () => {
     if (!tempItemText.trim()) return;
@@ -183,7 +221,7 @@ export default function Home() {
         reminderIso: inputDate,
         isCompleted: false
       };
-      setNotes([...notes, newNote]);
+      setNotes([newNote, ...notes]);
     }
     closeModal();
   };
@@ -242,16 +280,13 @@ export default function Home() {
       <header className="bg-white shadow-sm sticky top-0 z-10">
         <div className="max-w-5xl mx-auto px-4 py-4 flex justify-between items-center">
           <h1 className="text-xl font-bold text-gray-800">My Reminders</h1>
-          
           <div className="flex gap-2 items-center">
-            {/* ■ テスト通知ボタン（許可済みでも表示して確認できるように変更） */}
             <button 
               onClick={notificationPermission === "granted" ? sendTestNotification : requestNotificationPermission}
               className={`text-xs px-3 py-1.5 rounded font-bold ${notificationPermission === "granted" ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-orange-100 text-orange-600 hover:bg-orange-200'}`}
             >
               {notificationPermission === "granted" ? "🔔 テスト" : "🔔 通知ON"}
             </button>
-
             <button 
               onClick={() => setShowCompleted(!showCompleted)}
               className={`text-xs px-3 py-1.5 rounded border transition-colors ${showCompleted ? 'bg-blue-100 text-blue-700 border-blue-300' : 'bg-white text-gray-500 border-gray-300'}`}
@@ -268,18 +303,30 @@ export default function Home() {
             {showCompleted ? "完了したリストはありません" : "タスクがありません"}
           </p>
         ) : (
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-2 md:gap-4">
-            {visibleNotes.map((note) => (
-              <NoteCard 
-                key={note.id} 
-                note={note} 
-                onToggleComplete={toggleComplete}
-                onEdit={openEditModal}
-                onDelete={deleteNote}
-                onToggleItem={toggleItemCompletion}
-              />
-            ))}
-          </div>
+          /* ★ メモ一覧の並べ替えエリア */
+          <DndContext 
+            sensors={sensors} 
+            collisionDetection={closestCenter} 
+            onDragEnd={handleDragEndNotes}
+          >
+            <SortableContext 
+              items={visibleNotes.map(n => n.id)} 
+              strategy={rectSortingStrategy} // グリッド状の並べ替え設定
+            >
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2 md:gap-4">
+                {visibleNotes.map((note) => (
+                  <SortableNoteCard 
+                    key={note.id} 
+                    note={note} 
+                    onToggleComplete={toggleComplete}
+                    onEdit={openEditModal}
+                    onDelete={deleteNote}
+                    onToggleItem={toggleItemCompletion}
+                  />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
         )}
       </main>
 
@@ -292,7 +339,7 @@ export default function Home() {
             placeholder="メモ... (入力すると広がります)"
             value={simpleMemo}
             onChange={handleMemoChange}
-            style={{ height: 'auto' }} // 初期スタイル
+            style={{ height: 'auto' }}
           />
         </div>
       </div>
@@ -304,7 +351,7 @@ export default function Home() {
         +
       </button>
 
-      {/* モーダル部分（変更なし） */}
+      {/* 入力モーダル */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 max-h-[85vh] overflow-y-auto flex flex-col">
@@ -321,24 +368,46 @@ export default function Home() {
             />
 
             <div className="flex-1 overflow-y-auto mb-4">
-              <label className="block text-xs text-gray-400 mb-2">タスク項目</label>
-              <ul className="space-y-2 mb-3">
-                {inputItems.map((item) => (
-                  <li key={item.id} className="flex items-center gap-2 bg-gray-50 px-2 py-1 rounded border border-gray-100">
-                    <input 
-                      className="flex-1 bg-transparent text-sm focus:outline-none"
-                      value={item.text}
-                      onChange={(e) => handleUpdateItemText(item.id, e.target.value)}
-                    />
-                    <button 
-                      onClick={() => handleRemoveItem(item.id)}
-                      className="text-gray-300 hover:text-red-500 px-2"
-                    >
-                      ✕
-                    </button>
-                  </li>
-                ))}
-              </ul>
+              <label className="block text-xs text-gray-400 mb-2">タスク項目 (ドラッグで並べ替え)</label>
+              
+              {/* ★ タスク一覧の並べ替えエリア */}
+              <DndContext 
+                sensors={sensors} 
+                collisionDetection={closestCenter} 
+                onDragEnd={handleDragEndItems}
+              >
+                <SortableContext 
+                  items={inputItems.map(i => i.id)} 
+                  strategy={verticalListSortingStrategy} // 縦リストの並べ替え設定
+                >
+                  <ul className="space-y-2 mb-3">
+                    {inputItems.map((item) => (
+                      <SortableItem key={item.id} id={item.id}>
+                        <div className="flex items-center gap-2 bg-gray-50 px-2 py-1 rounded border border-gray-100">
+                          {/* ドラッグ用ハンドル（＝） */}
+                          <span className="text-gray-400 cursor-grab active:cursor-grabbing text-lg px-1">≡</span>
+                          
+                          <input 
+                            className="flex-1 bg-transparent text-sm focus:outline-none"
+                            value={item.text}
+                            onChange={(e) => handleUpdateItemText(item.id, e.target.value)}
+                            // 入力中はドラッグしないようにする
+                            onPointerDown={(e) => e.stopPropagation()} 
+                          />
+                          <button 
+                            onClick={() => handleRemoveItem(item.id)}
+                            className="text-gray-300 hover:text-red-500 px-2"
+                            onPointerDown={(e) => e.stopPropagation()} 
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </SortableItem>
+                    ))}
+                  </ul>
+                </SortableContext>
+              </DndContext>
+
               <div className="flex gap-2">
                 <input 
                   type="text" 
