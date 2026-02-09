@@ -1,17 +1,19 @@
 "use client"; 
 
 import { useState, useEffect, useRef } from 'react';
-import { Note, ListItem } from '../components/NoteCard';
+import NoteCard, { Note, ListItem } from '../components/NoteCard';
 import { SortableNoteCard } from '../components/SortableNoteCard';
 import { SortableItem } from '../components/SortableItem';
 import {
   DndContext, 
-  closestCenter, 
+  closestCorners, 
   KeyboardSensor, 
   PointerSensor, 
   useSensor, 
   useSensors,
-  DragEndEvent
+  DragEndEvent,
+  DragOverEvent,
+  DragStartEvent
 } from '@dnd-kit/core';
 import {
   arrayMove,
@@ -24,8 +26,6 @@ import {
 export default function Home() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [showCompleted, setShowCompleted] = useState(false);
-  
-  // ★追加: 編集モードの状態
   const [isEditMode, setIsEditMode] = useState(false);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -38,35 +38,32 @@ export default function Home() {
   
   const [simpleMemo, setSimpleMemo] = useState("");
   const [isLoaded, setIsLoaded] = useState(false);
+  
+  // ドラッグ中のアイテム情報を保持（ハイライト処理などは省略しますが、ロジックに必要）
+  const [activeId, setActiveId] = useState<string | number | null>(null);
 
   const [notificationPermission, setNotificationPermission] = useState("default");
   const lastCheckedMinute = useRef("");
   const memoTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
-  // --- ★自動クリーンアップ機能 ---
+  // --- 自動クリーンアップ ---
   const cleanupOldTasks = (currentNotes: Note[]) => {
     const today = new Date();
-    today.setHours(0, 0, 0, 0); // 今日の0時0分
+    today.setHours(0, 0, 0, 0); 
 
-    // リスト内の各タスクをチェック
-    const cleanedNotes = currentNotes.map(note => {
-      // 完了済み かつ 完了日が昨日以前のアイテムを除外
+    return currentNotes.map(note => {
       const activeItems = note.items.filter(item => {
-        if (!item.isCompleted) return true; // 未完了は残す
-        if (!item.completedAt) return true; // 日付情報がない(古いデータ)も一応残す
-        
-        // 完了日時が「今日の0時」より前なら削除対象
+        if (!item.isCompleted) return true; 
+        if (!item.completedAt) return true; 
         return item.completedAt >= today.getTime();
       });
       return { ...note, items: activeItems };
     });
-    
-    return cleanedNotes;
   };
 
   useEffect(() => {
@@ -84,11 +81,8 @@ export default function Home() {
           }
           return n;
         });
-
-        // ★読み込み時に古いタスクをお掃除
         const cleaned = cleanupOldTasks(migratedNotes);
         setNotes(cleaned);
-
       } catch (e) {
         console.error("データ読み込みエラー", e);
       }
@@ -113,7 +107,6 @@ export default function Home() {
 
     const timerId = setInterval(() => {
       checkReminders();
-      // ★定期チェック時にも日付またぎのお掃除を実行（0時過ぎた瞬間など）
       setNotes(prev => cleanupOldTasks(prev));
     }, 10000);
 
@@ -133,10 +126,7 @@ export default function Home() {
   };
 
   const requestNotificationPermission = () => {
-    if (!("Notification" in window)) {
-      alert("このブラウザは通知に対応していません。");
-      return;
-    }
+    if (!("Notification" in window)) return;
     Notification.requestPermission().then((permission) => {
       setNotificationPermission(permission);
       if (permission === "granted") sendTestNotification();
@@ -145,9 +135,7 @@ export default function Home() {
 
   const sendTestNotification = () => {
     if (Notification.permission === "granted") {
-      new Notification("🔔 テスト成功！", { 
-        body: "この表示が出れば、リマインダー通知も届きます。",
-      });
+      new Notification("🔔 テスト成功！", { body: "リマインダー通知も届きます。" });
     }
   };
 
@@ -169,18 +157,129 @@ export default function Home() {
     });
   };
 
-  const handleDragEndNotes = (event: DragEndEvent) => {
+  // --- ドラッグ＆ドロップ ロジック (最重要) ---
+
+  const handleDragStart = (event: DragStartEvent) => {
+    setActiveId(event.active.id);
+  };
+
+  const handleDragOver = (event: DragOverEvent) => {
     const { active, over } = event;
-    if (over && active.id !== over.id) {
-      setNotes((items) => {
-        const oldIndex = items.findIndex((item) => item.id === active.id);
-        const newIndex = items.findIndex((item) => item.id === over.id);
-        return arrayMove(items, oldIndex, newIndex);
+    if (!over) return;
+
+    // active.id がタスクかどうか判定（データ型で判定）
+    const activeType = active.data.current?.type;
+    
+    // リスト（Note）同士の移動なら何もしない（DragEndで処理）
+    if (activeType !== 'Task') return;
+
+    const activeId = active.id as string;
+    const overId = over.id;
+
+    // 元のノートを探す
+    const activeNote = notes.find(n => n.items.some(i => i.id === activeId));
+    if (!activeNote) return;
+
+    // 移動先のノートを探す（overIdがタスクIDの場合と、ノートIDの場合がある）
+    let overNote = notes.find(n => n.id === overId); // ノート自体の上にいる場合
+    if (!overNote) {
+      // タスクの上にいる場合、そのタスクを持つノートを探す
+      overNote = notes.find(n => n.items.some(i => i.id === overId));
+    }
+
+    if (!overNote) return;
+
+    // 違うノートへの移動、または同じノート内での移動
+    if (activeNote.id !== overNote.id) {
+      setNotes((prev) => {
+        const activeNoteIndex = prev.findIndex(n => n.id === activeNote!.id);
+        const overNoteIndex = prev.findIndex(n => n.id === overNote!.id);
+
+        const activeItems = prev[activeNoteIndex].items;
+        const overItems = prev[overNoteIndex].items;
+        
+        const activeItemIndex = activeItems.findIndex(i => i.id === activeId);
+        const overItemIndex = overItems.findIndex(i => i.id === overId);
+
+        let newIndex;
+        if (overItemIndex >= 0) {
+          // 他のタスクの上にある場合
+          newIndex = overItemIndex + (activeItemIndex < overItemIndex ? 1 : 0); // 簡易計算
+        } else {
+          // ノートの空きスペースにある場合
+          newIndex = overItems.length + 1;
+        }
+
+        // ここでは「見た目」を更新するために配列を操作する
+        // 実際にはdnd-kitのSortableStrategyが補完してくれるが、
+        // コンテナ間移動は自前でステート更新が必要
+        
+        return prev.map(n => {
+          if (n.id === activeNote!.id) {
+            return { ...n, items: activeItems.filter(i => i.id !== activeId) };
+          }
+          if (n.id === overNote!.id) {
+            // 既に移動済みなら何もしない（無限ループ防止）
+            if (n.items.some(i => i.id === activeId)) return n;
+
+            const newItems = [...n.items];
+            const movingItem = activeItems[activeItemIndex];
+            // 挿入位置の計算（ざっくり末尾か、overの位置）
+            const insertIndex = overItemIndex >= 0 ? overItemIndex : newItems.length;
+            
+            newItems.splice(insertIndex, 0, movingItem);
+            return { ...n, items: newItems };
+          }
+          return n;
+        });
       });
     }
   };
 
-  const handleDragEndItems = (event: DragEndEvent) => {
+  const handleDragEnd = (event: DragEndEvent) => {
+    setActiveId(null);
+    const { active, over } = event;
+    if (!over) return;
+
+    // リスト自体の並べ替え
+    if (active.data.current?.sortable?.containerId === 'notes-container' || !active.data.current?.type) {
+       if (active.id !== over.id) {
+        setNotes((items) => {
+          const oldIndex = items.findIndex((item) => item.id === active.id);
+          const newIndex = items.findIndex((item) => item.id === over.id);
+          return arrayMove(items, oldIndex, newIndex);
+        });
+      }
+      return;
+    }
+
+    // タスクの並べ替え（同じノート内での確定）
+    const activeId = active.id as string;
+    const overId = over.id;
+
+    const activeNote = notes.find(n => n.items.some(i => i.id === activeId));
+    const overNote = notes.find(n => n.id === overId) || notes.find(n => n.items.some(i => i.id === overId));
+
+    if (activeNote && overNote && activeNote.id === overNote.id) {
+      const noteIndex = notes.findIndex(n => n.id === activeNote.id);
+      const oldIndex = activeNote.items.findIndex(i => i.id === activeId);
+      const newIndex = activeNote.items.findIndex(i => i.id === overId);
+
+      if (oldIndex !== newIndex) {
+        setNotes(prev => {
+          const newNotes = [...prev];
+          newNotes[noteIndex] = {
+            ...newNotes[noteIndex],
+            items: arrayMove(newNotes[noteIndex].items, oldIndex, newIndex)
+          };
+          return newNotes;
+        });
+      }
+    }
+  };
+
+  // --- モーダル内での並べ替え（変更なし） ---
+  const handleDragEndItemsInModal = (event: DragEndEvent) => {
     const { active, over } = event;
     if (over && active.id !== over.id) {
       setInputItems((items) => {
@@ -190,6 +289,8 @@ export default function Home() {
       });
     }
   };
+
+  // --- その他ロジック ---
 
   const handleAddItem = () => {
     if (!tempItemText.trim()) return;
@@ -258,7 +359,7 @@ export default function Home() {
   };
 
   const openEditModal = (note: Note) => {
-    if (isEditMode) return; // 編集モード中はモーダルを開かない
+    if (isEditMode) return; 
     setEditingId(note.id);
     setInputTitle(note.title);
     setInputItems(note.items || []);
@@ -266,7 +367,6 @@ export default function Home() {
     setIsModalOpen(true);
   };
 
-  // ★項目完了切り替え（完了日時も記録）
   const toggleItemCompletion = (noteId: number, itemId: string) => {
     const updatedNotes = notes.map(note => {
       if (note.id === noteId) {
@@ -275,7 +375,6 @@ export default function Home() {
           ? { 
               ...item, 
               isCompleted: !item.isCompleted,
-              // 完了になったら現在時刻を記録、未完了に戻ったら消す
               completedAt: !item.isCompleted ? Date.now() : undefined 
             } 
           : item
@@ -314,15 +413,12 @@ export default function Home() {
             {isEditMode ? "編集モード" : "My Reminders"}
           </h1>
           <div className="flex gap-2 items-center">
-            
-            {/* ★編集モード切替ボタン */}
             <button 
               onClick={() => setIsEditMode(!isEditMode)}
               className={`text-xs px-3 py-1.5 rounded font-bold border transition-colors ${isEditMode ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300'}`}
             >
               {isEditMode ? "完了" : "編集"}
             </button>
-
             {!isEditMode && (
               <button 
                 onClick={() => setShowCompleted(!showCompleted)}
@@ -341,23 +437,26 @@ export default function Home() {
             {showCompleted ? "完了したリストはありません" : "タスクがありません"}
           </p>
         ) : (
+          /* ★ 全体を Grid レイアウトで固定し、位置ずれを防止 */
           <DndContext 
             sensors={sensors} 
-            collisionDetection={closestCenter} 
-            onDragEnd={handleDragEndNotes}
+            collisionDetection={closestCorners} 
+            onDragStart={handleDragStart}
+            onDragOver={handleDragOver} // リスト間移動の処理
+            onDragEnd={handleDragEnd}
           >
             <SortableContext 
+              id="notes-container" // リスト全体のID
               items={visibleNotes.map(n => n.id)} 
               strategy={rectSortingStrategy}
             >
-              {/* ★ここを変更: gridではなく columns (Masonry風) */}
-              {/* 編集モード時はドラッグしやすいようにGridに戻す、通常時は詰めて表示 */}
-              <div className={isEditMode ? "grid grid-cols-2 md:grid-cols-3 gap-4" : "columns-2 md:columns-3 gap-4 space-y-4"}>
+              {/* 常にグリッド表示 (columns廃止) */}
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4 items-start">
                 {visibleNotes.map((note) => (
                   <SortableNoteCard 
                     key={note.id} 
                     note={note} 
-                    isEditMode={isEditMode} // ★編集モードを渡す
+                    isEditMode={isEditMode}
                     onToggleComplete={toggleComplete}
                     onEdit={openEditModal}
                     onDelete={deleteNote}
@@ -393,6 +492,7 @@ export default function Home() {
         </button>
       )}
 
+      {/* 入力モーダル */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 max-h-[85vh] overflow-y-auto flex flex-col">
@@ -413,8 +513,8 @@ export default function Home() {
               
               <DndContext 
                 sensors={sensors} 
-                collisionDetection={closestCenter} 
-                onDragEnd={handleDragEndItems}
+                collisionDetection={closestCorners} 
+                onDragEnd={handleDragEndItemsInModal}
               >
                 <SortableContext 
                   items={inputItems.map(i => i.id)} 
@@ -472,7 +572,6 @@ export default function Home() {
                   value={inputDate}
                   onChange={(e) => setInputDate(e.target.value)}
                 />
-                {/* ★日時リセットボタン */}
                 <button 
                   onClick={() => setInputDate("")}
                   className="text-xs text-gray-500 border rounded px-2 hover:bg-gray-100"

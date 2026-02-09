@@ -1,11 +1,12 @@
 import React from 'react';
+import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { SortableTaskItem } from './SortableTaskItem';
 
-// ■ completedAt (完了日時) を追加
 export type ListItem = {
   id: string;
   text: string;
   isCompleted: boolean;
-  completedAt?: number; // ★追加
+  completedAt?: number;
 };
 
 export type Note = {
@@ -19,7 +20,7 @@ export type Note = {
 
 type Props = {
   note: Note;
-  isEditMode: boolean; // ★追加: 編集モードかどうか
+  isEditMode: boolean;
   onToggleComplete: (id: number) => void;
   onEdit: (note: Note) => void;
   onDelete: (id: number) => void;
@@ -33,38 +34,35 @@ export default function NoteCard({ note, isEditMode, onToggleComplete, onEdit, o
   const progress = totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0;
 
   return (
-    // ★レイアウト変更: mb-4 break-inside-avoid (これで隙間なく詰まります)
     <div 
-      onClick={() => !isEditMode && onEdit(note)} // 編集モードでない時だけクリックで開く
-      className={`relative p-3 rounded-xl shadow-sm border transition-all mb-4 break-inside-avoid
+      onClick={() => !isEditMode && onEdit(note)}
+      className={`relative p-3 rounded-xl shadow-sm border transition-all h-full flex flex-col
         ${note.isCompleted ? 'bg-gray-100 border-gray-200 opacity-60' : 'bg-white border-gray-100'}
         ${!isEditMode ? 'hover:shadow-md cursor-pointer active:scale-95' : ''}
         ${isEditMode ? 'border-dashed border-2 border-blue-300' : ''} 
       `}
     >
-      
-      {/* 削除ボタン（編集モードの時だけ表示） */}
+      {/* 削除ボタン */}
       {isEditMode && (
         <button 
           onClick={(e) => {
             e.stopPropagation();
             onDelete(note.id);
           }}
-          className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center shadow-md z-10"
+          className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center shadow-md z-10 hover:bg-red-600"
         >
           ✕
         </button>
       )}
 
-      {/* ドラッグハンドル（編集モードの時だけ表示） */}
+      {/* リスト移動用ハンドル（タイトル付近） */}
       {isEditMode && (
-        <div className="absolute top-2 left-1/2 -translate-x-1/2 text-gray-300">
-          :::
+        <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-white border border-blue-300 text-blue-400 px-2 rounded-full text-xs cursor-grab active:cursor-grabbing shadow-sm">
+          ⠿ リスト移動
         </div>
       )}
 
-      <div className={`flex items-start gap-2 mb-2 pr-2 ${isEditMode ? 'mt-4' : ''}`}>
-        {/* カード完了チェック (編集モード中は隠す) */}
+      <div className={`flex items-start gap-2 mb-2 pr-2 ${isEditMode ? 'mt-3' : ''}`}>
         {!isEditMode && (
           <input 
             type="checkbox" 
@@ -100,23 +98,29 @@ export default function NoteCard({ note, isEditMode, onToggleComplete, onEdit, o
         </div>
       )}
 
-      <div className="space-y-1 pl-1">
-        {(note.items || []).map((item) => (
-          <div key={item.id} className="flex items-start gap-2 text-xs">
-            {/* 項目チェック (編集モード中は無効化) */}
-            <input 
-              type="checkbox"
-              checked={item.isCompleted}
-              onClick={(e) => e.stopPropagation()} 
-              onChange={() => onToggleItem(note.id, item.id)}
-              className="mt-0.5 cursor-pointer accent-green-500 shrink-0"
-              disabled={note.isCompleted || isEditMode}
+      {/* ★ ここが重要: タスクを受け入れる領域 */}
+      <div className="space-y-1 pl-1 flex-1 min-h-[20px]">
+        <SortableContext 
+          items={note.items.map(i => i.id)} 
+          strategy={verticalListSortingStrategy}
+        >
+          {note.items.map((item) => (
+            <SortableTaskItem
+              key={item.id}
+              item={item}
+              noteId={note.id}
+              isEditMode={isEditMode}
+              onToggleItem={onToggleItem}
             />
-            <span className={`break-all leading-tight ${item.isCompleted ? 'text-gray-400 line-through' : 'text-gray-600'}`}>
-              {item.text}
-            </span>
+          ))}
+        </SortableContext>
+        
+        {/* タスクがない時でもドロップできるようにする空エリア */}
+        {note.items.length === 0 && isEditMode && (
+          <div className="text-xs text-gray-300 text-center py-4 border-2 border-dashed border-gray-100 rounded">
+            タスクなし
           </div>
-        ))}
+        )}
       </div>
     </div>
   );
