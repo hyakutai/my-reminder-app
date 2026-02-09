@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { Note, ListItem } from '../components/NoteCard';
-// ★追加: 並べ替えに必要なライブラリ
 import { SortableNoteCard } from '../components/SortableNoteCard';
 import { SortableItem } from '../components/SortableItem';
 import {
@@ -26,6 +25,9 @@ export default function Home() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [showCompleted, setShowCompleted] = useState(false);
   
+  // ★追加: 編集モードの状態
+  const [isEditMode, setIsEditMode] = useState(false);
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   
@@ -41,11 +43,31 @@ export default function Home() {
   const lastCheckedMinute = useRef("");
   const memoTextareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // ★追加: ドラッグ操作のセンサー設定（少し動かさないとドラッグ開始しないようにして、クリックと区別する）
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
+
+  // --- ★自動クリーンアップ機能 ---
+  const cleanupOldTasks = (currentNotes: Note[]) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // 今日の0時0分
+
+    // リスト内の各タスクをチェック
+    const cleanedNotes = currentNotes.map(note => {
+      // 完了済み かつ 完了日が昨日以前のアイテムを除外
+      const activeItems = note.items.filter(item => {
+        if (!item.isCompleted) return true; // 未完了は残す
+        if (!item.completedAt) return true; // 日付情報がない(古いデータ)も一応残す
+        
+        // 完了日時が「今日の0時」より前なら削除対象
+        return item.completedAt >= today.getTime();
+      });
+      return { ...note, items: activeItems };
+    });
+    
+    return cleanedNotes;
+  };
 
   useEffect(() => {
     const savedNotes = localStorage.getItem("my-reminders");
@@ -62,7 +84,11 @@ export default function Home() {
           }
           return n;
         });
-        setNotes(migratedNotes);
+
+        // ★読み込み時に古いタスクをお掃除
+        const cleaned = cleanupOldTasks(migratedNotes);
+        setNotes(cleaned);
+
       } catch (e) {
         console.error("データ読み込みエラー", e);
       }
@@ -85,7 +111,12 @@ export default function Home() {
     if (!isLoaded) return;
     localStorage.setItem("my-reminders", JSON.stringify(notes));
 
-    const timerId = setInterval(checkReminders, 10000);
+    const timerId = setInterval(() => {
+      checkReminders();
+      // ★定期チェック時にも日付またぎのお掃除を実行（0時過ぎた瞬間など）
+      setNotes(prev => cleanupOldTasks(prev));
+    }, 10000);
+
     return () => clearInterval(timerId);
   }, [notes, isLoaded]);
 
@@ -116,10 +147,7 @@ export default function Home() {
     if (Notification.permission === "granted") {
       new Notification("🔔 テスト成功！", { 
         body: "この表示が出れば、リマインダー通知も届きます。",
-        requireInteraction: false 
       });
-    } else {
-      alert("通知が許可されていません。ブラウザの設定を確認してください。");
     }
   };
 
@@ -141,9 +169,6 @@ export default function Home() {
     });
   };
 
-  // --- ドラッグ＆ドロップ処理 ---
-
-  // ★ メモ（カード）の並べ替え終了時
   const handleDragEndNotes = (event: DragEndEvent) => {
     const { active, over } = event;
     if (over && active.id !== over.id) {
@@ -155,7 +180,6 @@ export default function Home() {
     }
   };
 
-  // ★ モーダル内のタスク並べ替え終了時
   const handleDragEndItems = (event: DragEndEvent) => {
     const { active, over } = event;
     if (over && active.id !== over.id) {
@@ -166,8 +190,6 @@ export default function Home() {
       });
     }
   };
-
-  // ---
 
   const handleAddItem = () => {
     if (!tempItemText.trim()) return;
@@ -221,7 +243,7 @@ export default function Home() {
         reminderIso: inputDate,
         isCompleted: false
       };
-      setNotes([newNote, ...notes]);
+      setNotes([...notes, newNote]);
     }
     closeModal();
   };
@@ -236,6 +258,7 @@ export default function Home() {
   };
 
   const openEditModal = (note: Note) => {
+    if (isEditMode) return; // 編集モード中はモーダルを開かない
     setEditingId(note.id);
     setInputTitle(note.title);
     setInputItems(note.items || []);
@@ -243,11 +266,19 @@ export default function Home() {
     setIsModalOpen(true);
   };
 
+  // ★項目完了切り替え（完了日時も記録）
   const toggleItemCompletion = (noteId: number, itemId: string) => {
     const updatedNotes = notes.map(note => {
       if (note.id === noteId) {
         const newItems = note.items.map(item => 
-          item.id === itemId ? { ...item, isCompleted: !item.isCompleted } : item
+          item.id === itemId 
+          ? { 
+              ...item, 
+              isCompleted: !item.isCompleted,
+              // 完了になったら現在時刻を記録、未完了に戻ったら消す
+              completedAt: !item.isCompleted ? Date.now() : undefined 
+            } 
+          : item
         );
         return { ...note, items: newItems };
       }
@@ -277,22 +308,29 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-40 relative">
-      <header className="bg-white shadow-sm sticky top-0 z-10">
+      <header className="bg-white shadow-sm sticky top-0 z-10 transition-colors duration-300" style={isEditMode ? {backgroundColor: '#eff6ff'} : {}}>
         <div className="max-w-5xl mx-auto px-4 py-4 flex justify-between items-center">
-          <h1 className="text-xl font-bold text-gray-800">My Reminders</h1>
+          <h1 className="text-xl font-bold text-gray-800">
+            {isEditMode ? "編集モード" : "My Reminders"}
+          </h1>
           <div className="flex gap-2 items-center">
+            
+            {/* ★編集モード切替ボタン */}
             <button 
-              onClick={notificationPermission === "granted" ? sendTestNotification : requestNotificationPermission}
-              className={`text-xs px-3 py-1.5 rounded font-bold ${notificationPermission === "granted" ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-orange-100 text-orange-600 hover:bg-orange-200'}`}
+              onClick={() => setIsEditMode(!isEditMode)}
+              className={`text-xs px-3 py-1.5 rounded font-bold border transition-colors ${isEditMode ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300'}`}
             >
-              {notificationPermission === "granted" ? "🔔 テスト" : "🔔 通知ON"}
+              {isEditMode ? "完了" : "編集"}
             </button>
-            <button 
-              onClick={() => setShowCompleted(!showCompleted)}
-              className={`text-xs px-3 py-1.5 rounded border transition-colors ${showCompleted ? 'bg-blue-100 text-blue-700 border-blue-300' : 'bg-white text-gray-500 border-gray-300'}`}
-            >
-              {showCompleted ? "未完了" : "完了済み"}
-            </button>
+
+            {!isEditMode && (
+              <button 
+                onClick={() => setShowCompleted(!showCompleted)}
+                className={`text-xs px-3 py-1.5 rounded border transition-colors ${showCompleted ? 'bg-blue-100 text-blue-700 border-blue-300' : 'bg-white text-gray-500 border-gray-300'}`}
+              >
+                {showCompleted ? "未完了" : "完了済み"}
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -303,7 +341,6 @@ export default function Home() {
             {showCompleted ? "完了したリストはありません" : "タスクがありません"}
           </p>
         ) : (
-          /* ★ メモ一覧の並べ替えエリア */
           <DndContext 
             sensors={sensors} 
             collisionDetection={closestCenter} 
@@ -311,13 +348,16 @@ export default function Home() {
           >
             <SortableContext 
               items={visibleNotes.map(n => n.id)} 
-              strategy={rectSortingStrategy} // グリッド状の並べ替え設定
+              strategy={rectSortingStrategy}
             >
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-2 md:gap-4">
+              {/* ★ここを変更: gridではなく columns (Masonry風) */}
+              {/* 編集モード時はドラッグしやすいようにGridに戻す、通常時は詰めて表示 */}
+              <div className={isEditMode ? "grid grid-cols-2 md:grid-cols-3 gap-4" : "columns-2 md:columns-3 gap-4 space-y-4"}>
                 {visibleNotes.map((note) => (
                   <SortableNoteCard 
                     key={note.id} 
                     note={note} 
+                    isEditMode={isEditMode} // ★編集モードを渡す
                     onToggleComplete={toggleComplete}
                     onEdit={openEditModal}
                     onDelete={deleteNote}
@@ -336,7 +376,7 @@ export default function Home() {
           <textarea
             ref={memoTextareaRef}
             className="w-full bg-transparent resize-none focus:outline-none text-gray-700 min-h-[5rem] overflow-hidden text-sm"
-            placeholder="メモ... (入力すると広がります)"
+            placeholder="メモ..."
             value={simpleMemo}
             onChange={handleMemoChange}
             style={{ height: 'auto' }}
@@ -344,14 +384,15 @@ export default function Home() {
         </div>
       </div>
 
-      <button 
-        onClick={() => { closeModal(); setIsModalOpen(true); }}
-        className="fixed bottom-6 right-6 bg-blue-600 text-white w-14 h-14 rounded-full shadow-lg flex items-center justify-center text-3xl hover:bg-blue-700 transition-colors z-20"
-      >
-        +
-      </button>
+      {!isEditMode && (
+        <button 
+          onClick={() => { closeModal(); setIsModalOpen(true); }}
+          className="fixed bottom-6 right-6 bg-blue-600 text-white w-14 h-14 rounded-full shadow-lg flex items-center justify-center text-3xl hover:bg-blue-700 transition-colors z-20"
+        >
+          +
+        </button>
+      )}
 
-      {/* 入力モーダル */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 max-h-[85vh] overflow-y-auto flex flex-col">
@@ -370,7 +411,6 @@ export default function Home() {
             <div className="flex-1 overflow-y-auto mb-4">
               <label className="block text-xs text-gray-400 mb-2">タスク項目 (ドラッグで並べ替え)</label>
               
-              {/* ★ タスク一覧の並べ替えエリア */}
               <DndContext 
                 sensors={sensors} 
                 collisionDetection={closestCenter} 
@@ -378,20 +418,17 @@ export default function Home() {
               >
                 <SortableContext 
                   items={inputItems.map(i => i.id)} 
-                  strategy={verticalListSortingStrategy} // 縦リストの並べ替え設定
+                  strategy={verticalListSortingStrategy}
                 >
                   <ul className="space-y-2 mb-3">
                     {inputItems.map((item) => (
                       <SortableItem key={item.id} id={item.id}>
                         <div className="flex items-center gap-2 bg-gray-50 px-2 py-1 rounded border border-gray-100">
-                          {/* ドラッグ用ハンドル（＝） */}
                           <span className="text-gray-400 cursor-grab active:cursor-grabbing text-lg px-1">≡</span>
-                          
                           <input 
                             className="flex-1 bg-transparent text-sm focus:outline-none"
                             value={item.text}
                             onChange={(e) => handleUpdateItemText(item.id, e.target.value)}
-                            // 入力中はドラッグしないようにする
                             onPointerDown={(e) => e.stopPropagation()} 
                           />
                           <button 
@@ -428,12 +465,21 @@ export default function Home() {
 
             <div className="mb-4 pt-4 border-t">
               <label className="block text-xs text-gray-400 mb-1">日時設定</label>
-              <input 
-                type="datetime-local"
-                className="w-full border p-2 rounded text-gray-700 text-sm"
-                value={inputDate}
-                onChange={(e) => setInputDate(e.target.value)}
-              />
+              <div className="flex gap-2">
+                <input 
+                  type="datetime-local"
+                  className="w-full border p-2 rounded text-gray-700 text-sm"
+                  value={inputDate}
+                  onChange={(e) => setInputDate(e.target.value)}
+                />
+                {/* ★日時リセットボタン */}
+                <button 
+                  onClick={() => setInputDate("")}
+                  className="text-xs text-gray-500 border rounded px-2 hover:bg-gray-100"
+                >
+                  クリア
+                </button>
+              </div>
             </div>
 
             <div className="flex justify-end gap-3">
