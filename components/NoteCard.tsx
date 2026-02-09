@@ -36,13 +36,13 @@ export default function NoteCard({ note, isEditMode, onToggleComplete, onEdit, o
   return (
     <div 
       onClick={() => !isEditMode && onEdit(note)}
-      className={`relative p-3 rounded-xl shadow-sm border transition-all h-full flex flex-col
+      // ★ Masonry用に mb-4 break-inside-avoid を維持
+      className={`relative p-3 rounded-xl shadow-sm border transition-all h-full flex flex-col mb-4 break-inside-avoid
         ${note.isCompleted ? 'bg-gray-100 border-gray-200 opacity-60' : 'bg-white border-gray-100'}
         ${!isEditMode ? 'hover:shadow-md cursor-pointer active:scale-95' : ''}
         ${isEditMode ? 'border-dashed border-2 border-blue-300' : ''} 
       `}
     >
-      {/* 削除ボタン */}
       {isEditMode && (
         <button 
           onClick={(e) => {
@@ -55,9 +55,9 @@ export default function NoteCard({ note, isEditMode, onToggleComplete, onEdit, o
         </button>
       )}
 
-      {/* リスト移動用ハンドル（タイトル付近） */}
+      {/* ★ 修正: whitespace-nowrap を追加して、絶対に改行させない */}
       {isEditMode && (
-        <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-white border border-blue-300 text-blue-400 px-2 rounded-full text-xs cursor-grab active:cursor-grabbing shadow-sm">
+        <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-white border border-blue-300 text-blue-400 px-2 rounded-full text-xs cursor-grab active:cursor-grabbing shadow-sm whitespace-nowrap z-10">
           ⠿ リスト移動
         </div>
       )}
@@ -98,7 +98,6 @@ export default function NoteCard({ note, isEditMode, onToggleComplete, onEdit, o
         </div>
       )}
 
-      {/* ★ ここが重要: タスクを受け入れる領域 */}
       <div className="space-y-1 pl-1 flex-1 min-h-[20px]">
         <SortableContext 
           items={note.items.map(i => i.id)} 
@@ -115,7 +114,6 @@ export default function NoteCard({ note, isEditMode, onToggleComplete, onEdit, o
           ))}
         </SortableContext>
         
-        {/* タスクがない時でもドロップできるようにする空エリア */}
         {note.items.length === 0 && isEditMode && (
           <div className="text-xs text-gray-300 text-center py-4 border-2 border-dashed border-gray-100 rounded">
             タスクなし

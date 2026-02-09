@@ -39,7 +39,6 @@ export default function Home() {
   const [simpleMemo, setSimpleMemo] = useState("");
   const [isLoaded, setIsLoaded] = useState(false);
   
-  // ドラッグ中のアイテム情報を保持（ハイライト処理などは省略しますが、ロジックに必要）
   const [activeId, setActiveId] = useState<string | number | null>(null);
 
   const [notificationPermission, setNotificationPermission] = useState("default");
@@ -51,11 +50,9 @@ export default function Home() {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
-  // --- 自動クリーンアップ ---
   const cleanupOldTasks = (currentNotes: Note[]) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0); 
-
     return currentNotes.map(note => {
       const activeItems = note.items.filter(item => {
         if (!item.isCompleted) return true; 
@@ -126,7 +123,10 @@ export default function Home() {
   };
 
   const requestNotificationPermission = () => {
-    if (!("Notification" in window)) return;
+    if (!("Notification" in window)) {
+      alert("このブラウザは通知に対応していません。");
+      return;
+    }
     Notification.requestPermission().then((permission) => {
       setNotificationPermission(permission);
       if (permission === "granted") sendTestNotification();
@@ -157,8 +157,6 @@ export default function Home() {
     });
   };
 
-  // --- ドラッグ＆ドロップ ロジック (最重要) ---
-
   const handleDragStart = (event: DragStartEvent) => {
     setActiveId(event.active.id);
   };
@@ -167,29 +165,22 @@ export default function Home() {
     const { active, over } = event;
     if (!over) return;
 
-    // active.id がタスクかどうか判定（データ型で判定）
     const activeType = active.data.current?.type;
-    
-    // リスト（Note）同士の移動なら何もしない（DragEndで処理）
     if (activeType !== 'Task') return;
 
     const activeId = active.id as string;
     const overId = over.id;
 
-    // 元のノートを探す
     const activeNote = notes.find(n => n.items.some(i => i.id === activeId));
     if (!activeNote) return;
 
-    // 移動先のノートを探す（overIdがタスクIDの場合と、ノートIDの場合がある）
-    let overNote = notes.find(n => n.id === overId); // ノート自体の上にいる場合
+    let overNote = notes.find(n => n.id === overId);
     if (!overNote) {
-      // タスクの上にいる場合、そのタスクを持つノートを探す
       overNote = notes.find(n => n.items.some(i => i.id === overId));
     }
 
     if (!overNote) return;
 
-    // 違うノートへの移動、または同じノート内での移動
     if (activeNote.id !== overNote.id) {
       setNotes((prev) => {
         const activeNoteIndex = prev.findIndex(n => n.id === activeNote!.id);
@@ -203,30 +194,20 @@ export default function Home() {
 
         let newIndex;
         if (overItemIndex >= 0) {
-          // 他のタスクの上にある場合
-          newIndex = overItemIndex + (activeItemIndex < overItemIndex ? 1 : 0); // 簡易計算
+          newIndex = overItemIndex + (activeItemIndex < overItemIndex ? 1 : 0);
         } else {
-          // ノートの空きスペースにある場合
           newIndex = overItems.length + 1;
         }
-
-        // ここでは「見た目」を更新するために配列を操作する
-        // 実際にはdnd-kitのSortableStrategyが補完してくれるが、
-        // コンテナ間移動は自前でステート更新が必要
         
         return prev.map(n => {
           if (n.id === activeNote!.id) {
             return { ...n, items: activeItems.filter(i => i.id !== activeId) };
           }
           if (n.id === overNote!.id) {
-            // 既に移動済みなら何もしない（無限ループ防止）
             if (n.items.some(i => i.id === activeId)) return n;
-
             const newItems = [...n.items];
             const movingItem = activeItems[activeItemIndex];
-            // 挿入位置の計算（ざっくり末尾か、overの位置）
             const insertIndex = overItemIndex >= 0 ? overItemIndex : newItems.length;
-            
             newItems.splice(insertIndex, 0, movingItem);
             return { ...n, items: newItems };
           }
@@ -241,7 +222,6 @@ export default function Home() {
     const { active, over } = event;
     if (!over) return;
 
-    // リスト自体の並べ替え
     if (active.data.current?.sortable?.containerId === 'notes-container' || !active.data.current?.type) {
        if (active.id !== over.id) {
         setNotes((items) => {
@@ -253,7 +233,6 @@ export default function Home() {
       return;
     }
 
-    // タスクの並べ替え（同じノート内での確定）
     const activeId = active.id as string;
     const overId = over.id;
 
@@ -278,7 +257,6 @@ export default function Home() {
     }
   };
 
-  // --- モーダル内での並べ替え（変更なし） ---
   const handleDragEndItemsInModal = (event: DragEndEvent) => {
     const { active, over } = event;
     if (over && active.id !== over.id) {
@@ -289,8 +267,6 @@ export default function Home() {
       });
     }
   };
-
-  // --- その他ロジック ---
 
   const handleAddItem = () => {
     if (!tempItemText.trim()) return;
@@ -413,12 +389,22 @@ export default function Home() {
             {isEditMode ? "編集モード" : "My Reminders"}
           </h1>
           <div className="flex gap-2 items-center">
+            
+            {/* ★ 通知ボタン復活 */}
+            <button 
+              onClick={notificationPermission === "granted" ? sendTestNotification : requestNotificationPermission}
+              className={`text-xs px-3 py-1.5 rounded font-bold ${notificationPermission === "granted" ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-orange-100 text-orange-600 hover:bg-orange-200'}`}
+            >
+              {notificationPermission === "granted" ? "🔔 テスト" : "🔔 通知ON"}
+            </button>
+
             <button 
               onClick={() => setIsEditMode(!isEditMode)}
               className={`text-xs px-3 py-1.5 rounded font-bold border transition-colors ${isEditMode ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300'}`}
             >
               {isEditMode ? "完了" : "編集"}
             </button>
+
             {!isEditMode && (
               <button 
                 onClick={() => setShowCompleted(!showCompleted)}
@@ -437,21 +423,24 @@ export default function Home() {
             {showCompleted ? "完了したリストはありません" : "タスクがありません"}
           </p>
         ) : (
-          /* ★ 全体を Grid レイアウトで固定し、位置ずれを防止 */
           <DndContext 
             sensors={sensors} 
             collisionDetection={closestCorners} 
             onDragStart={handleDragStart}
-            onDragOver={handleDragOver} // リスト間移動の処理
+            onDragOver={handleDragOver}
             onDragEnd={handleDragEnd}
           >
             <SortableContext 
-              id="notes-container" // リスト全体のID
+              id="notes-container"
               items={visibleNotes.map(n => n.id)} 
               strategy={rectSortingStrategy}
             >
-              {/* 常にグリッド表示 (columns廃止) */}
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-4 items-start">
+              {/* ★ ここでレイアウトを切り替える */}
+              <div className={
+                isEditMode 
+                  ? "grid grid-cols-2 md:grid-cols-3 gap-4 items-start" 
+                  : "columns-2 md:columns-3 gap-4 space-y-4"
+              }>
                 {visibleNotes.map((note) => (
                   <SortableNoteCard 
                     key={note.id} 
