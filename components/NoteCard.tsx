@@ -21,13 +21,22 @@ export type Note = {
 type Props = {
   note: Note;
   isEditMode: boolean;
+  addressLabel: string;
   onToggleComplete: (id: number) => void;
   onEdit: (note: Note) => void;
   onDelete: (id: number) => void;
   onToggleItem: (noteId: number, itemId: string) => void;
 };
 
-export default function NoteCard({ note, isEditMode, onToggleComplete, onEdit, onDelete, onToggleItem }: Props) {
+export default function NoteCard({ 
+  note, 
+  isEditMode, 
+  addressLabel, 
+  onToggleComplete, 
+  onEdit, 
+  onDelete, 
+  onToggleItem 
+}: Props) {
   
   const totalItems = note.items ? note.items.length : 0;
   const completedItems = note.items ? note.items.filter(i => i.isCompleted).length : 0;
@@ -36,40 +45,46 @@ export default function NoteCard({ note, isEditMode, onToggleComplete, onEdit, o
   return (
     <div 
       onClick={() => !isEditMode && onEdit(note)}
-      // ★ Masonry用に mb-4 break-inside-avoid を維持
-      className={`relative p-3 rounded-xl shadow-sm border transition-all h-full flex flex-col mb-4 break-inside-avoid
+      className={`relative p-3 rounded-xl shadow-sm border transition-all flex flex-col w-full
         ${note.isCompleted ? 'bg-gray-100 border-gray-200 opacity-60' : 'bg-white border-gray-100'}
         ${!isEditMode ? 'hover:shadow-md cursor-pointer active:scale-95' : ''}
         ${isEditMode ? 'border-dashed border-2 border-blue-300' : ''} 
       `}
     >
+      {/* ★ 修正: 位置を「左上 (left-0)」に変更 */}
+      <div className="absolute top-0 left-0 bg-gray-200 text-gray-600 text-[10px] font-bold px-2 py-0.5 rounded-br-lg rounded-tl-lg z-10 pointer-events-none">
+        {addressLabel}
+      </div>
+
+      {/* 削除ボタン（右上のまま） */}
       {isEditMode && (
         <button 
           onClick={(e) => {
             e.stopPropagation();
             onDelete(note.id);
           }}
-          className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center shadow-md z-10 hover:bg-red-600"
+          className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center shadow-md z-20 hover:bg-red-600"
         >
           ✕
         </button>
       )}
 
-      {/* ★ 修正: whitespace-nowrap を追加して、絶対に改行させない */}
+      {/* 移動ハンドル（中央上のまま） */}
       {isEditMode && (
-        <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-white border border-blue-300 text-blue-400 px-2 rounded-full text-xs cursor-grab active:cursor-grabbing shadow-sm whitespace-nowrap z-10">
+        <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-white border border-blue-300 text-blue-400 px-2 rounded-full text-xs cursor-grab active:cursor-grabbing shadow-sm whitespace-nowrap z-20">
           ⠿ リスト移動
         </div>
       )}
 
-      <div className={`flex items-start gap-2 mb-2 pr-2 ${isEditMode ? 'mt-3' : ''}`}>
+      {/* タイトル周りのマージン調整 */}
+      <div className={`flex items-start gap-2 mb-2 pr-2 ${isEditMode ? 'mt-4' : 'mt-4'}`}>
         {!isEditMode && (
           <input 
             type="checkbox" 
             checked={note.isCompleted} 
             onClick={(e) => e.stopPropagation()}
             onChange={() => onToggleComplete(note.id)}
-            className="w-5 h-5 mt-1 cursor-pointer accent-blue-600 shrink-0"
+            className="w-5 h-5 mt-0.5 cursor-pointer accent-blue-600 shrink-0"
           />
         )}
 

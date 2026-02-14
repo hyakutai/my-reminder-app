@@ -50,13 +50,15 @@ export default function Home() {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
+  // ★ 24時削除ロジック
   const cleanupOldTasks = (currentNotes: Note[]) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0); 
+
     return currentNotes.map(note => {
       const activeItems = note.items.filter(item => {
         if (!item.isCompleted) return true; 
-        if (!item.completedAt) return true; 
+        if (!item.completedAt) return false; // 日付なし完了タスクは削除
         return item.completedAt >= today.getTime();
       });
       return { ...note, items: activeItems };
@@ -157,6 +159,8 @@ export default function Home() {
     });
   };
 
+  // --- ドラッグ＆ドロップ ---
+
   const handleDragStart = (event: DragStartEvent) => {
     setActiveId(event.active.id);
   };
@@ -185,7 +189,6 @@ export default function Home() {
       setNotes((prev) => {
         const activeNoteIndex = prev.findIndex(n => n.id === activeNote!.id);
         const overNoteIndex = prev.findIndex(n => n.id === overNote!.id);
-
         const activeItems = prev[activeNoteIndex].items;
         const overItems = prev[overNoteIndex].items;
         
@@ -235,7 +238,6 @@ export default function Home() {
 
     const activeId = active.id as string;
     const overId = over.id;
-
     const activeNote = notes.find(n => n.items.some(i => i.id === activeId));
     const overNote = notes.find(n => n.id === overId) || notes.find(n => n.items.some(i => i.id === overId));
 
@@ -315,7 +317,7 @@ export default function Home() {
       const newNote: Note = {
         id: Date.now(),
         title: inputTitle,
-        items: inputItems,
+        items: inputItems, 
         reminder: formattedDate,
         reminderIso: inputDate,
         isCompleted: false
@@ -377,20 +379,26 @@ export default function Home() {
     setNotes(updatedNotes);
   };
 
+  // ★ 住所計算（偶数=左、奇数=右）
+  const getAddressLabel = (index: number) => {
+    const row = Math.floor(index / 2) + 1; 
+    const side = index % 2 === 0 ? "L" : "R";
+    return `${side}${row}`;
+  };
+
   if (!isLoaded) return <div className="min-h-screen bg-gray-50" />;
 
   const visibleNotes = notes.filter(note => showCompleted ? note.isCompleted : !note.isCompleted);
 
   return (
     <div className="min-h-screen bg-gray-50 pb-40 relative">
-      <header className="bg-white shadow-sm sticky top-0 z-10 transition-colors duration-300" style={isEditMode ? {backgroundColor: '#eff6ff'} : {}}>
+      <header className="bg-white shadow-sm sticky top-0 z-30 transition-colors duration-300" style={isEditMode ? {backgroundColor: '#eff6ff'} : {}}>
         <div className="max-w-5xl mx-auto px-4 py-4 flex justify-between items-center">
           <h1 className="text-xl font-bold text-gray-800">
             {isEditMode ? "編集モード" : "My Reminders"}
           </h1>
           <div className="flex gap-2 items-center">
             
-            {/* ★ 通知ボタン復活 */}
             <button 
               onClick={notificationPermission === "granted" ? sendTestNotification : requestNotificationPermission}
               className={`text-xs px-3 py-1.5 rounded font-bold ${notificationPermission === "granted" ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-orange-100 text-orange-600 hover:bg-orange-200'}`}
@@ -423,6 +431,10 @@ export default function Home() {
             {showCompleted ? "完了したリストはありません" : "タスクがありません"}
           </p>
         ) : (
+          /* ★ ポイント: 
+             編集モード(isEditMode)なら「Grid」で表示してドラッグ可能にする。
+             通常モードなら「手動2列レイアウト」で隙間なく表示する。
+          */
           <DndContext 
             sensors={sensors} 
             collisionDetection={closestCorners} 
@@ -435,24 +447,65 @@ export default function Home() {
               items={visibleNotes.map(n => n.id)} 
               strategy={rectSortingStrategy}
             >
-              {/* ★ ここでレイアウトを切り替える */}
-              <div className={
-                isEditMode 
-                  ? "grid grid-cols-2 md:grid-cols-3 gap-4 items-start" 
-                  : "columns-2 md:columns-3 gap-4 space-y-4"
-              }>
-                {visibleNotes.map((note) => (
-                  <SortableNoteCard 
-                    key={note.id} 
-                    note={note} 
-                    isEditMode={isEditMode}
-                    onToggleComplete={toggleComplete}
-                    onEdit={openEditModal}
-                    onDelete={deleteNote}
-                    onToggleItem={toggleItemCompletion}
-                  />
-                ))}
-              </div>
+              {isEditMode ? (
+                // --- 編集モード（グリッド表示・ドラッグ可能）---
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4 items-start">
+                  {visibleNotes.map((note, index) => (
+                    <SortableNoteCard 
+                      key={note.id} 
+                      note={note} 
+                      isEditMode={true}
+                      addressLabel={getAddressLabel(index)}
+                      onToggleComplete={toggleComplete}
+                      onEdit={openEditModal}
+                      onDelete={deleteNote}
+                      onToggleItem={toggleItemCompletion}
+                    />
+                  ))}
+                </div>
+              ) : (
+                // --- 通常モード（手動左右分割で隙間なしMasonry表示）---
+                // 左列：偶数インデックス (0, 2, 4...) -> L1, L2, L3...
+                // 右列：奇数インデックス (1, 3, 5...) -> R1, R2, R3...
+                <div className="flex gap-4 items-start">
+                  {/* 左カラム */}
+                  <div className="flex-1 flex flex-col gap-4">
+                    {visibleNotes.filter((_, i) => i % 2 === 0).map((note) => {
+                      const originalIndex = visibleNotes.findIndex(n => n.id === note.id);
+                      return (
+                        <NoteCard 
+                          key={note.id} 
+                          note={note} 
+                          isEditMode={false}
+                          addressLabel={getAddressLabel(originalIndex)}
+                          onToggleComplete={toggleComplete}
+                          onEdit={openEditModal}
+                          onDelete={deleteNote}
+                          onToggleItem={toggleItemCompletion}
+                        />
+                      );
+                    })}
+                  </div>
+                  {/* 右カラム */}
+                  <div className="flex-1 flex flex-col gap-4">
+                    {visibleNotes.filter((_, i) => i % 2 !== 0).map((note) => {
+                      const originalIndex = visibleNotes.findIndex(n => n.id === note.id);
+                      return (
+                        <NoteCard 
+                          key={note.id} 
+                          note={note} 
+                          isEditMode={false}
+                          addressLabel={getAddressLabel(originalIndex)}
+                          onToggleComplete={toggleComplete}
+                          onEdit={openEditModal}
+                          onDelete={deleteNote}
+                          onToggleItem={toggleItemCompletion}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </SortableContext>
           </DndContext>
         )}
@@ -475,13 +528,12 @@ export default function Home() {
       {!isEditMode && (
         <button 
           onClick={() => { closeModal(); setIsModalOpen(true); }}
-          className="fixed bottom-6 right-6 bg-blue-600 text-white w-14 h-14 rounded-full shadow-lg flex items-center justify-center text-3xl hover:bg-blue-700 transition-colors z-20"
+          className="fixed bottom-6 right-6 bg-blue-600 text-white w-14 h-14 rounded-full shadow-lg flex items-center justify-center text-3xl hover:bg-blue-700 transition-colors z-30"
         >
           +
         </button>
       )}
 
-      {/* 入力モーダル */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 max-h-[85vh] overflow-y-auto flex flex-col">

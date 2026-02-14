@@ -1,3 +1,4 @@
+// components/SortableNoteCard.tsx
 import React from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -5,7 +6,8 @@ import NoteCard, { Note } from './NoteCard';
 
 type Props = {
   note: Note;
-  isEditMode: boolean; // ★追加
+  isEditMode: boolean;
+  addressLabel: string; // ★追加: これで配達リストに入れます！
   onToggleComplete: (id: number) => void;
   onEdit: (note: Note) => void;
   onDelete: (id: number) => void;
@@ -22,7 +24,7 @@ export function SortableNoteCard(props: Props) {
     isDragging
   } = useSortable({ 
     id: props.note.id,
-    disabled: !props.isEditMode // ★編集モードじゃない時はドラッグ禁止
+    disabled: !props.isEditMode
   });
 
   const style = {
@@ -35,6 +37,7 @@ export function SortableNoteCard(props: Props) {
 
   return (
     <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
+      {/* propsの中には addressLabel も入っているので、そのまま渡されます */}
       <NoteCard {...props} />
     </div>
   );
